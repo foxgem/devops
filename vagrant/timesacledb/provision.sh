@@ -12,6 +12,9 @@ mkdir -p /var/provisions
 
 apt-get update
 
+echo "Changing timezone to Asia/Shanghai..."
+cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+
 if [ ! -f /var/provisions/postgresql ]; then
     echo "Installing Postgresql and setting it up..."
     apt-get install -y postgresql-10
