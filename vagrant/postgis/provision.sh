@@ -1,51 +1,78 @@
 #!/bin/bash -e
 
-sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt xenial-pgdg main" >> /etc/apt/sources.list'
+cat > /etc/apt/sources.list <<EOF
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ $(lsb_release -sc) main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ $(lsb_release -sc)-updates main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ $(lsb_release -sc)-backports main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu/ $(lsb_release -sc)-security main restricted universe multiverse
+EOF
 
-sed -i "s/archive.ubuntu.com/mirrors.aliyun.com/g" /etc/apt/sources.list
+cat > /etc/apt/sources.list.d/pgdg.list <<EOF
+deb https://mirrors.tuna.tsinghua.edu.cn/postgresql/repos/apt/ $(lsb_release -sc)-pgdg main
+EOF
 
-wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-
-mkdir -p /var/provisions
+curl -s https://mirrors.tuna.tsinghua.edu.cn/postgresql/repos/apt/ACCC4CF8.asc | apt-key add -
 
 apt update
 
 PG_VERSION=10
 
 echo "Changing timezone to Asia/Shanghai..."
-cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+timedatectl set-timezone Asia/Shanghai
 
-if [ ! -f /var/provisions/postgresql ]; then
-    echo "Installing Postgresql and setting it up..."
-    apt install -y postgresql-10
-    touch /var/provisions/postgresql
+echo "Installing Postgresql and setting it up..."
+apt install -y postgresql-${PG_VERSION}
+systemctl enable postgresql
 
-    # set dirs for data and log
-    mkdir -p /var/lib/pgsql/data
-    export PGDATA=/var/lib/pgsql/data
-    mkdir -p /var/log/pgsql
-    export PGLOG=/var/log/pgsql
+# make client in host can connect pg in vm.
+PG_CONF="/etc/postgresql/$PG_VERSION/main/postgresql.conf"
+PG_HBA="/etc/postgresql/$PG_VERSION/main/pg_hba.conf"
+cat > "${PG_HBA}" <<EOF
+local  all   all                peer
+host   all   postgres   all     trust
+host   all   all        all     md5
+EOF
+cat > "${PG_CONF}" <<EOF
+data_directory = '/var/lib/postgresql/${PG_VERSION}/main'
+hba_file = '/etc/postgresql/${PG_VERSION}/main/pg_hba.conf'
+ident_file = '/etc/postgresql/${PG_VERSION}/main/pg_ident.conf'
+external_pid_file = '/var/run/postgresql/${PG_VERSION}-main.pid'
+listen_addresses = '*'
+port = 5432
+unix_socket_directories = '/var/run/postgresql'
+ssl = on
+ssl_cert_file = '/etc/ssl/certs/ssl-cert-snakeoil.pem'
+ssl_key_file = '/etc/ssl/private/ssl-cert-snakeoil.key'
+dynamic_shared_memory_type = posix
+log_line_prefix = '%m [%p] %q%u@%d '
+log_timezone = 'PRC'
+cluster_name = '${PG_VERSION}/main'
+stats_temp_directory = '/var/run/postgresql/${PG_VERSION}-main.pg_stat_tmp'
+datestyle = 'iso, ymd'
+timezone = 'PRC'
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+default_text_search_config = 'pg_catalog.simple'
+include_dir = 'conf.d'
+max_connections = 50
+shared_buffers = 512MB
+maintenance_work_mem = 256MB
+checkpoint_completion_target = 0.7
+wal_buffers = 16MB
+default_statistics_target = 100
+random_page_cost = 4
+effective_io_concurrency = 2
+work_mem = 20971kB
+max_worker_processes = 2
+max_parallel_workers_per_gather = 1
+max_parallel_workers = 2
+client_encoding = utf8
+EOF
 
-    # make client in host can connect pg in vm.
-    PG_CONF="/etc/postgresql/$PG_VERSION/main/postgresql.conf"
-    PG_HBA="/etc/postgresql/$PG_VERSION/main/pg_hba.conf"
-    sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF"
-    echo "host    all             all             all                     md5" >> "$PG_HBA"
-    echo "client_encoding = utf8" >> "$PG_CONF"
-fi
-
-if [ ! -f /var/provisions/postgis ]; then
-    echo "Installing postgis and setting it up..."
-    apt install -y postgresql-10-postgis-2.4
-    apt install -y postgresql-10-postgis-scripts
-    touch /var/provisions/postgis
-fi
-
-if [ ! -f /var/provisions/pgrouting ]; then
-    echo "Installing pgrouting and setting it up..."
-    apt install -y postgresql-10-pgrouting
-    touch /var/provisions/pgrouting
-fi
+echo "Installing postgis and pgrouting..."
+apt install -y postgresql-${PG_VERSION}-postgis-2.4 postgresql-${PG_VERSION}-postgis-scripts postgresql-${PG_VERSION}-pgrouting
 
 service postgresql restart
 
